@@ -1,0 +1,80 @@
+name: Auto release
+on:
+  push:
+    branches:
+    - master
+jobs:
+
+  do-it:
+    name: Do this
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        param: [sprout-proving.key, sprout-verifying.key, sapling-spend.params, sapling-output.params, sprout-groth16.params]
+    steps:
+      - name: Extract branch name
+        shell: bash
+        run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
+        id: extract_branch
+      - name: Shortify commit sha
+        shell: bash
+        run: echo "##[set-output name=sha_short;]$(echo ${GITHUB_SHA::7})"
+        id: shortify_commit
+      - name: Checkout repo
+        uses: actions/checkout@v2
+      - name: Fetch and push
+        run: |
+          ./repo-get-params.sh
+      - name: Upload ${{ matrix.param }} as artifact
+        uses: actions/upload-artifact@v1
+        with:
+          name: ${{ matrix.param }}
+          path: /home/runner/zcash-params/${{ matrix.param }}
+
+  create_release:
+    name: Create release
+    runs-on: ubuntu-latest
+    needs: [do-it]
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Extract branch name
+        shell: bash
+        run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
+        id: extract_branch
+      - name: Shortify commit sha
+        shell: bash
+        run: echo "##[set-output name=sha_short;]$(echo ${GITHUB_SHA::7})"
+        id: shortify_commit
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: release_${{ steps.shortify_commit.outputs.sha_short }}
+          release_name: Release ${{ steps.extract_branch.outputs.branch }}
+          draft: false
+          prerelease: true
+
+  release_assets:
+    name: Release assets
+    needs: create_release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        param: [sprout-proving.key, sprout-verifying.key, sapling-spend.params, sapling-output.params, sprout-groth16.params] 
+    steps:
+      - name: Download ${{ matrix.param }}
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ matrix.param }}
+      - name: Upload release assets
+        uses: actions/upload-release-asset@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_name: ${{ matrix.param }}
+          asset_path: ${{ matrix.param }}/${{ matrix.param }}
+          asset_content_type: application/octet-stream
